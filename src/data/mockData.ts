@@ -133,7 +133,7 @@ export const GEAR_ADDONS: GearAddon[] = [
 export const LOCATIONS: LocationOption[] = [
   {
     id: 'la-studio',
-    name: 'Apex Los Angeles Flagship Studio',
+    name: 'CP Los Angeles Flagship Studio',
     area: 'Sunset Blvd, Hollywood, CA',
     type: 'studio',
     description: '5,500 sq ft soundproof studio with cyclorama wall, RGB light grid & infinity cove.',
@@ -142,7 +142,7 @@ export const LOCATIONS: LocationOption[] = [
   },
   {
     id: 'nyc-loft',
-    name: 'Apex Manhattan Skyline Loft',
+    name: 'CP Manhattan Skyline Loft',
     area: 'SoHo, New York City, NY',
     type: 'studio',
     description: 'Glass-walled luxury penthouse loft stage with panoramic views over Manhattan.',
@@ -196,7 +196,7 @@ export const PORTFOLIO_ITEMS: PortfolioItem[] = [
     title: 'Vogue US - Sunset Blvd Neon Flash',
     category: 'Fashion Flash',
     client: 'Vogue US x Hollywood Fashion',
-    location: 'Apex Studio 1, Sunset Blvd, LA',
+    location: 'CP Studio 1, Sunset Blvd, LA',
     cameraGear: 'Hasselblad H6D-100c + Profoto Pro-11',
     lens: 'HC 100mm f/2.2',
     director: 'Sarah Jenkins',
@@ -318,7 +318,7 @@ export const CREW_MEMBERS: CrewMember[] = [
 
 export const SAMPLE_BOOKINGS: Booking[] = [
   {
-    id: 'APEX-US-9402',
+    id: 'CP-US-9402',
     userId: 'client-1',
     clientName: 'Sarah Jenkins',
     clientEmail: 'sarah.j@vogue.com',

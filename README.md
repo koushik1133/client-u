@@ -1,100 +1,117 @@
-# Lane Trailers - Production & Sales Management System
+# CP Studios
 
-A high-performance, real-time web application built for **Lane Trailers** to manage trailer manufacturing pipelines, bay allocations, backlog registrations, dealer networks, quote generation, and shipping archives.
-
----
-
-## 🛠️ Tech Stack
-
-### **Frontend & Framework**
-* **Framework**: [React 19](https://react.dev/) + [TypeScript](https://www.typescriptlang.org/)
-* **Build Tool**: [Vite](https://vitejs.dev/)
-* **Routing**: [React Router v6](https://reactrouter.com/) (`react-router-dom`)
-* **Icons**: [Lucide React](https://lucide.dev/) (`lucide-react`)
-* **Date Utilities**: [date-fns](https://date-fns.org/)
-
-### **Styling & Aesthetics**
-* **CSS Architecture**: Modern Vanilla CSS with CSS Custom Properties (Variables)
-* **Design System**: Sleek Dark Mode with Glassmorphism, dynamic gradients, responsive grids, micro-interactions, and high-visibility status indicators.
-
-### **Backend, Database & Real-Time Sync**
-* **Database**: [Supabase PostgreSQL](https://supabase.com/)
-* **Real-time Engine**: Supabase Realtime Channels (WebSockets for multi-user live board syncing)
-* **File Storage**: Supabase Storage Buckets (`trailers-files`) for document uploads (Spec Sheets, Inspection Sheets, Trailer Photos)
-
-### **Drag-and-Drop (DND)**
-* **DND Engine**: [@dnd-kit/core](https://dndkit.com/) & [@dnd-kit/sortable]
-* **Collision Strategy**: Custom hybrid collision detection (`rectIntersection` + `pointerWithin` + `closestCorners`) with zero-loop index guards for responsive touch and desktop card reordering.
-
-### **Excel Processing & Document Generation**
-* **Excel Engine**: [ExcelJS](https://github.com/exceljs/exceljs) + [JSZip](https://stuk.github.io/jszip/)
-* **Dynamic Injection**: Automated parsing of `.xlsx` model templates with dynamic cell label replacement (Customer Name, Serial Number, Salesperson, Specs) for instant Quote and Spec Sheet generation.
+Marketing and booking site for a cinematic videography and 8K production studio. Built as
+a client demo: a single scrolling page with a working quote configurator, a
+four-step booking flow, a filterable work archive and a client portal.
 
 ---
 
-## 🗺️ Application Navigation & Views
+## Stack
 
-| Route | View Name | Description |
+| Layer | Choice |
+| :--- | :--- |
+| UI | React 19 + TypeScript |
+| Build | Vite 8 (`@vitejs/plugin-react-swc`) |
+| Styling | Tailwind CSS v4, CSS-first `@theme` — **no `tailwind.config.js`** |
+| Motion | Framer Motion 12, wrapped in `LazyMotion` |
+| Icons | lucide-react |
+
+Four runtime dependencies total. No router, no backend, no state library — the
+demo persists to `localStorage`.
+
+---
+
+## Getting started
+
+```bash
+npm install
+npm run dev      # http://localhost:5174
+```
+
+```bash
+npm run build    # tsc -b && vite build  ->  dist/
+npm run preview  # serve the production build on :4173
+npm run lint
+```
+
+---
+
+## Design system
+
+Everything lives in `src/index.css` under `@theme`, so each token is
+automatically a Tailwind utility (`--color-gold-400` → `text-gold-400`).
+
+**Obsidian & Ember** — a near-black ground with a gold studio-strobe accent and a
+warm ember secondary.
+
+| Role | Token | Contrast on `--color-base` |
 | :--- | :--- | :--- |
-| **`/`** | **Dashboard (Kanban Pipeline)** | Main interactive production board divided into manufacturing phases (`PREFAB`, `BUILD`, `PAINT`, `OUTSOURCE`, `TRIM`). Features real-time drag-and-drop ordering, remaining workload hours, priority flags, and trailer details. |
-| **`/stations`** | **Bays (Station Allocations)** | Production bay matrix view mapping trailers to physical factory bays (`B1`, `B2`, `B3`, `B4`). Includes customizable bay capacities and live floor tracking. |
-| **`/backlog`** | **Backlog & Registration** | Queue management and unit registration. Allows registering new trailer orders, auto-assigning serial numbers, selecting dealer locations, and generating custom Excel quotes. |
-| **`/schedule`** | **Timeline & Scheduling** | Time-horizon scheduling view displaying estimated completion dates, promised shipping deadlines, and runway capacity analysis across weeks. |
-| **`/catalog`** | **Model & Dealer Catalog** | Centralized management hub for trailer models, target production hours per phase, spec configurations, Excel templates, and dealer branch locations *(Manager Access Only)*. |
-| **`/archive`** | **Shipping Archive** | Complete historical record of all shipped trailers with search filters, financial summaries, and automated ZIP exports for spec sheets and photos. |
-| **`/tv`** | **TV Floor Display Mode** | High-contrast, auto-scrolling full-screen monitor view optimized for workshop floor displays and Google Cast TVs (`/tv/station1`, `/tv/station2`). |
+| Headings | `ink-hi` `#F4F6FA` | 17:1 |
+| Body | `ink-mid` `#A8B2C4` | 8.3:1 |
+| Captions | `ink-low` `#78829A` | 5.1:1 |
+| Accent | `gold-400` `#EFC35E` | 11.8:1 |
+| Secondary | `ember-400` `#FF8A5B` | 8.5:1 |
+
+All clear WCAG AA. Type is two variable families — Playfair Display for display
+headings, Inter for everything else.
+
+Prebuilt classes: `.glass` · `.glass-strong` · `.text-gradient-gold` · `.rule-fade`
+· `.eyebrow` · `.grain` · `.shiny-text` · `.float-soft` · `.pulse-ring`
 
 ---
 
-## ⚡ Key Features
+## Shared primitives
 
-1. **Real-time Multi-User Collaboration**: Live updates across all connected browsers and floor monitors using Supabase Realtime WebSockets.
-2. **Manager Price Lock & PIN Protection**: Financial values (sale prices, cost breakdowns, dealer pricing) are protected behind global manager PIN authorization (`isPriceUnlockedGlobally`).
-3. **Role-Based View Controls**: Tailored user experiences for Managers and Factory Workers.
-4. **Automated Excel Quote & Spec Sheet Generation**: Fills spreadsheet templates on-the-fly directly in the browser and triggers downloads.
-5. **Mandatory Spec Sheet & Shipping Verification**: Safeguards in the shipping workflow to ensure compliance before completing shipments.
-6. **Ultra-Fast Payload Performance**: Optimized database queries utilizing Supabase Storage for documents to ensure sub-second page loads.
+Sections compose these rather than re-implementing animation logic, which keeps
+timing identical site-wide.
 
----
+**`src/lib/motion.tsx`** — `Reveal`, `Stagger` / `StaggerItem`, `TextReveal`,
+`Parallax`, `Magnetic`, `Counter`, `useSectionProgress`, plus the `EASE` and
+`DURATION` vocabularies.
 
-## 🚀 Getting Started
+**`src/lib/ui.tsx`** — `Img`, `SpotlightCard`, `TiltCard`, `BorderBeam`,
+`ShinyText`, `Marquee`, `Button`, `SectionHeading`, `ScrollProgress`, `cx`.
 
-### **Prerequisites**
-* Node.js v18+ 
-* npm / pnpm / yarn
+### Two rules the build depends on
 
-### **Installation**
+1. **Import `m`, never `motion`.** The app is wrapped in
+   `<LazyMotion features={domAnimation} strict>` to halve the Framer runtime;
+   `strict` turns a `motion` import into a loud runtime error.
+2. **No `layout` / `layoutId` props** — those need `domMax`, which is not loaded.
 
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/lanetrailers/production.git
-   cd production
-   ```
-
-2. **Install dependencies:**
-   ```bash
-   npm install
-   ```
-
-3. **Configure Environment Variables:**
-   Create a `.env.local` file in the root directory:
-   ```env
-   VITE_SUPABASE_URL=https://your-supabase-project.supabase.co
-   VITE_SUPABASE_ANON_KEY=your-supabase-anon-key
-   ```
-
-4. **Run Development Server:**
-   ```bash
-   npm run dev
-   ```
-
-5. **Build for Production:**
-   ```bash
-   npm run build
-   ```
+Animation is restricted to `transform` and `opacity` so nothing triggers layout or
+paint mid-scroll, and every primitive collapses to its final state under
+`prefers-reduced-motion`.
 
 ---
 
-## 📄 License
+## Structure
 
-Internal Proprietary Software for **Lane Trailers**. All Rights Reserved.
+```
+src/
+├── App.tsx                 # section composition, scroll spy, session state
+├── main.tsx                # LazyMotion boundary
+├── index.css               # @theme tokens, base layer, keyframes
+├── lib/
+│   ├── motion.tsx          # animation primitives
+│   └── ui.tsx              # UI primitives
+├── components/             # one file per section
+└── data/
+    ├── mockData.ts         # booking domain
+    └── siteContent.ts      # editorial content
+```
+
+Section order and their `id`s: `hero` → trust bar → `work` → `services` →
+stats → `process` → `packages` → `booking` → `studio` → `voices` → `portal` →
+closing CTA → footer.
+
+---
+
+## Notes
+
+The sign-in modal is a demo shell. No credentials are stored, transmitted or
+validated against anything — the password field exists for visual realism only and
+never leaves component state.
+
+Imagery is loaded from Unsplash at request time; `<Img>` rewrites those URLs to
+WebP at the width actually needed and reserves the layout box so nothing shifts.

@@ -1,55 +1,68 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0" />
-    <title>APEX FLASH STUDIOS | Premier US Cinematic Videography & 8K Production Studio</title>
-    <!-- Google Fonts: Playfair Display, Cinzel, Outfit, Space Mono, Inter -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700;800;900&family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&family=Playfair+Display:ital,wght@0,400;0,600;0,700;0,800;0,900;1,400;1,600&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
-    <!-- Tailwind CSS Engine -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#05070B" />
+
+    <title>CP Studios — Cinematic Film &amp; 8K Production, Los Angeles</title>
+    <meta
+      name="description"
+      content="CP Studios is an award-winning US cinema house producing 8K commercials, luxury wedding films and editorial fashion campaigns. Book a shoot in under two minutes."
+    />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="CP Studios — Cinematic Film &amp; 8K Production" />
+    <meta
+      property="og:description"
+      content="Award-winning US cinema house. 8K commercials, luxury wedding films, editorial fashion campaigns."
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <!-- Fonts: 2 variable families (3 files) instead of 5 static families (28 files) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300..700&family=Playfair+Display:ital,wght@0,400..900;1,400..700&display=swap"
+    />
+
+    <!-- Warm up the image CDN before React paints the hero -->
+    <link rel="preconnect" href="https://images.unsplash.com" crossorigin />
+    <link rel="dns-prefetch" href="https://images.unsplash.com" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- Test hook: `?raf-shim` keeps animation frames ticking in hidden webviews
+         (headless verification, embedded previews). Inert without the flag. -->
     <script>
-      tailwind.config = {
-        darkMode: 'class',
-        theme: {
-          extend: {
-            fontFamily: {
-              serif: ['Playfair Display', 'Georgia', 'serif'],
-              cinzel: ['Cinzel', 'serif'],
-              sans: ['Outfit', 'Inter', 'sans-serif'],
-              mono: ['Space Mono', 'Courier New', 'monospace']
-            },
-            colors: {
-              gold: {
-                300: '#fde047',
-                400: '#fbbf24',
-                500: '#f59e0b',
-                600: '#d97706',
-                700: '#b45309'
-              },
-              ruby: {
-                400: '#fb7185',
-                500: '#f43f5e',
-                600: '#e11d48',
-                700: '#be123c'
-              },
-              obsidian: {
-                950: '#030508',
-                900: '#070a10',
-                850: '#0e1420',
-                800: '#151d2d'
-              }
-            }
-          }
+      if (new URLSearchParams(location.search).has('raf-shim')) {
+        // Hidden pages throttle timers to 1Hz, but MessageChannel is exempt —
+        // drive queued rAF callbacks through it at ~16ms without clamping.
+        var __raf = window.requestAnimationFrame.bind(window)
+        var __queue = []
+        var __chan = new MessageChannel()
+        var __pumping = false
+        __chan.port1.onmessage = function () {
+          var now = performance.now()
+          if (now - __last < 15) { __chan.port2.postMessage(0); return }
+          __last = now
+          var jobs = __queue
+          __queue = []
+          __pumping = __queue.length > 0
+          for (var i = 0; i < jobs.length; i++) jobs[i](now)
+          if (__queue.length) { __chan.port2.postMessage(0) } else { __pumping = false }
+        }
+        var __last = 0
+        window.requestAnimationFrame = function (cb) {
+          if (document.visibilityState !== 'hidden') return __raf(cb)
+          __queue.push(cb)
+          if (!__pumping) { __pumping = true; __chan.port2.postMessage(0) }
+          return 0
         }
       }
     </script>
-  </head>
-  <body class="bg-[#04060a] text-slate-100 antialiased selection:bg-amber-500 selection:text-black">
-    <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

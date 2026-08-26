@@ -1,682 +1,947 @@
-import React, { useState } from 'react';
-import { Calendar as CalendarIcon, Clock, MapPin, Camera, Sparkles, Check, ChevronRight, ChevronLeft, ShieldCheck, Download, User as UserIcon, CheckCircle2, Zap } from 'lucide-react';
-import type { ShootCategory, TimeSlot, TimezoneOption, GearAddon, LocationOption, Booking, User } from '../types/flashCinema';
-import { SHOOT_CATEGORIES, TIME_SLOTS_PST, GEAR_ADDONS, LOCATIONS, TIMEZONES } from '../data/mockData';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { AnimatePresence, m } from 'framer-motion'
+import {
+  ArrowLeft,
+  ArrowRight,
+  Calendar,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Globe,
+  MapPin,
+  PartyPopper,
+  Zap,
+} from 'lucide-react'
+import type {
+  Booking,
+  GearAddon,
+  LocationOption,
+  ShootCategory,
+  TimeSlot,
+  TimezoneOption,
+  User,
+} from '../types/flashCinema'
+import {
+  GEAR_ADDONS,
+  LOCATIONS,
+  SHOOT_CATEGORIES,
+  TIMEZONES,
+  TIME_SLOTS_PST,
+} from '../data/mockData'
+import { EASE } from '../lib/motion'
+import { Button, SectionHeading, cx } from '../lib/ui'
 
 interface BookingEngineProps {
-  user: User | null;
-  selectedTimezone: TimezoneOption;
-  onSelectTimezone: (tz: TimezoneOption) => void;
-  onBookingConfirmed: (booking: Booking) => void;
-  onOpenAuthModal: () => void;
+  user: User | null
+  selectedTimezone: TimezoneOption
+  onSelectTimezone: (tz: TimezoneOption) => void
+  onBookingConfirmed: (booking: Booking) => void
+  onOpenAuthModal: () => void
+  preselectedCategoryId?: string | null
 }
 
-export const BookingEngine: React.FC<BookingEngineProps> = ({
+/* --------------------------------------------------------------- money -- */
+
+const TAX_RATE = 0.08875
+
+const USD0 = (n: number) =>
+  n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
+
+const USD2 = (n: number) =>
+  n.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 })
+
+/* ------------------------------------------------------------ timezone -- */
+
+const PST_OFFSET = -8
+
+/** "07:00 AM" -> hour 7 / "05:30 PM" -> 17.5-ish parts. */
+function parsePstTime(time: string): { hour: number; minute: number } {
+  const match = time.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i)
+  if (!match) return { hour: 0, minute: 0 }
+  let hour = parseInt(match[1], 10) % 12
+  if (match[3].toUpperCase() === 'PM') hour += 12
+  return { hour, minute: parseInt(match[2], 10) }
+}
+
+function formatHour(hour: number, minute: number): string {
+  const period = hour >= 12 ? 'PM' : 'AM'
+  const display = hour % 12 === 0 ? 12 : hour % 12
+  return `${display}:${String(minute).padStart(2, '0')} ${period}`
+}
+
+/** Converts a PST slot into the client's timezone, noting day rollover. */
+function convertSlot(timePST: string, tz: TimezoneOption): { time: string; dayShift: string } {
+  const { hour, minute } = parsePstTime(timePST)
+  const raw = hour + (tz.utcOffsetHours - PST_OFFSET)
+  const wrapped = ((raw % 24) + 24) % 24
+  const dayShift = raw >= 24 ? ' (+1 day)' : raw < 0 ? ' (−1 day)' : ''
+  return { time: formatHour(wrapped, minute), dayShift }
+}
+
+/* ------------------------------------------------------------ calendar -- */
+
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+]
+
+const WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
+
+function toIsoDate(y: number, mo: number, d: number): string {
+  return `${y}-${String(mo + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+}
+
+/* --------------------------------------------------------------- steps -- */
+
+type StepIndex = 0 | 1 | 2 | 3
+
+const STEPS = [
+  { id: 0, label: 'Production' },
+  { id: 1, label: 'Date & Time' },
+  { id: 2, label: 'Details' },
+  { id: 3, label: 'Confirm' },
+] as const
+
+interface DetailErrors {
+  name?: string
+  email?: string
+  phone?: string
+}
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/
+const PHONE_RE = /^\+?[\d\s().-]{7,}$/
+
+/* ============================================================== engine -- */
+
+export function BookingEngine({
   user,
   selectedTimezone,
   onSelectTimezone,
   onBookingConfirmed,
-  onOpenAuthModal
-}) => {
-  const [step, setStep] = useState<number>(1);
+  onOpenAuthModal,
+  preselectedCategoryId,
+}: BookingEngineProps) {
+  const today = useMemo(() => {
+    const now = new Date()
+    return { y: now.getFullYear(), mo: now.getMonth(), d: now.getDate() }
+  }, [])
 
-  // Selection States
-  const [selectedCategory, setSelectedCategory] = useState<ShootCategory>(SHOOT_CATEGORIES[0]);
-  const [selectedDate, setSelectedDate] = useState<string>(
-    new Date(Date.now() + 86400000 * 3).toISOString().split('T')[0]
-  );
-  const [selectedSlot, setSelectedSlot] = useState<TimeSlot>(TIME_SLOTS_PST[0]);
-  const [selectedLocation, setSelectedLocation] = useState<LocationOption>(LOCATIONS[0]);
-  const [addons, setAddons] = useState<GearAddon[]>(GEAR_ADDONS.map(a => ({ ...a, selected: false })));
-  
-  // Client Contact Details (Pre-filled if user logged in)
-  const [clientName, setClientName] = useState(user ? user.name : '');
-  const [clientEmail, setClientEmail] = useState(user ? user.email : '');
-  const [clientPhone, setClientPhone] = useState(user ? user.phone || '' : '');
-  const [specialNotes, setSpecialNotes] = useState('');
-  
-  const [bookingDone, setBookingDone] = useState<Booking | null>(null);
+  const [step, setStep] = useState<StepIndex>(0)
+  const [direction, setDirection] = useState(1)
 
-  // Helper: Convert PST slot time into selected timezone
-  const convertSlotToTimezone = (slotPST: string, tz: TimezoneOption): string => {
-    if (tz.id === 'pst') return `${slotPST} PST`;
-    
-    const [timeStr, period] = slotPST.split(' ');
-    let [hours, minutes] = timeStr.split(':').map(Number);
-    if (period === 'PM' && hours !== 12) hours += 12;
-    if (period === 'AM' && hours === 12) hours = 0;
+  const [category, setCategory] = useState<ShootCategory | null>(null)
+  const [viewYear, setViewYear] = useState(today.y)
+  const [viewMonth, setViewMonth] = useState(today.mo)
+  const [date, setDate] = useState<string | null>(null)
+  const [slot, setSlot] = useState<TimeSlot | null>(null)
+  const [location, setLocation] = useState<LocationOption>(LOCATIONS[0])
+  const [addons, setAddons] = useState<GearAddon[]>([])
+  const [tzOpen, setTzOpen] = useState(false)
 
-    const diffHours = tz.utcOffsetHours - (-8); // Difference relative to PST (GMT-8)
-    let convertedHour = (hours + diffHours + 24) % 24;
-    const convPeriod = convertedHour >= 12 ? 'PM' : 'AM';
-    const finalHour = convertedHour % 12 === 0 ? 12 : Math.floor(convertedHour % 12);
-    
-    return `${finalHour}:${minutes < 10 ? '0' + minutes : minutes} ${convPeriod} ${tz.code}`;
-  };
+  const [name, setName] = useState(user?.name ?? '')
+  const [email, setEmail] = useState(user?.email ?? '')
+  const [phone, setPhone] = useState(user?.phone ?? '')
+  const [instructions, setInstructions] = useState('')
+  const [errors, setErrors] = useState<DetailErrors>({})
 
-  // Pricing calculations (USD)
-  const categoryPrice = selectedCategory.basePriceUSD;
-  const locationFee = selectedLocation.extraFeeUSD;
-  const addonsTotal = addons.filter(a => a.selected).reduce((acc, curr) => acc + curr.priceUSD, 0);
-  const subtotal = categoryPrice + locationFee + addonsTotal;
-  const taxUSD = Math.round((subtotal * 0.08875) * 100) / 100; // US Commercial Sales Tax 8.875%
-  const grandTotal = Math.round((subtotal + taxUSD) * 100) / 100;
+  const [confirmed, setConfirmed] = useState<Booking | null>(null)
+  const tzRef = useRef<HTMLDivElement>(null)
+  const sectionRef = useRef<HTMLElement>(null)
 
-  const toggleAddon = (addonId: string) => {
-    setAddons(addons.map(a => a.id === addonId ? { ...a, selected: !a.selected } : a));
-  };
+  /* Preselect a category chosen from the services grid */
+  useEffect(() => {
+    if (!preselectedCategoryId) return
+    const match = SHOOT_CATEGORIES.find((c) => c.id === preselectedCategoryId)
+    if (match) {
+      setCategory(match)
+      setConfirmed(null)
+      setStep(1)
+      setDirection(1)
+    }
+  }, [preselectedCategoryId])
 
-  const handleFinalBooking = (e: React.FormEvent) => {
-    e.preventDefault();
+  /* Prefill details when the user signs in */
+  useEffect(() => {
+    if (!user) return
+    setName((prev) => prev || user.name)
+    setEmail((prev) => prev || user.email)
+    if (user.phone) setPhone((prev) => prev || user.phone!)
+  }, [user])
 
-    if (!clientName || !clientEmail || !clientPhone) {
-      alert('Please fill in your name, email, and phone number.');
-      return;
+  /* Close the timezone menu on outside pointerdown */
+  useEffect(() => {
+    if (!tzOpen) return
+    const onPointer = (e: PointerEvent) => {
+      if (tzRef.current && !tzRef.current.contains(e.target as Node)) setTzOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setTzOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointer)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('pointerdown', onPointer)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [tzOpen])
+
+  /* ------------------------------------------------------------- totals -- */
+
+  const money = useMemo(() => {
+    const base = category?.basePriceUSD ?? 0
+    const locationFee = location.extraFeeUSD
+    const addonTotal = addons.reduce((sum, a) => sum + a.priceUSD, 0)
+    const subtotal = base + locationFee + addonTotal
+    const tax = Math.round(subtotal * TAX_RATE * 100) / 100
+    return { base, locationFee, addonTotal, subtotal, tax, total: subtotal + tax }
+  }, [category, location, addons])
+
+  /* ------------------------------------------------------------ validity -- */
+
+  const detailErrors = useMemo((): DetailErrors => {
+    const next: DetailErrors = {}
+    if (!name.trim()) next.name = 'Enter your full name.'
+    if (!email.trim()) next.email = 'Enter your email address.'
+    else if (!EMAIL_RE.test(email.trim())) next.email = 'Enter a valid email address.'
+    if (!phone.trim()) next.phone = 'Enter a phone number.'
+    else if (!PHONE_RE.test(phone.trim())) next.phone = 'Enter a valid phone number.'
+    return next
+  }, [name, email, phone])
+
+  const stepValid: Record<StepIndex, boolean> = {
+    0: category !== null,
+    1: date !== null && slot !== null,
+    2: Object.keys(detailErrors).length === 0,
+    3: true,
+  }
+
+  const goTo = (next: StepIndex) => {
+    setDirection(next > step ? 1 : -1)
+    setStep(next)
+    sectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  const handleContinue = () => {
+    if (step === 2) {
+      setErrors(detailErrors)
+      if (Object.keys(detailErrors).length > 0) return
+    }
+    if (step < 3 && stepValid[step]) goTo((step + 1) as StepIndex)
+  }
+
+  /* ------------------------------------------------------------- confirm -- */
+
+  const handleConfirm = () => {
+    if (!user) {
+      onOpenAuthModal()
+      return
+    }
+    if (!category || !date || !slot) return
+
+    const converted = convertSlot(slot.timePST, selectedTimezone)
+    const booking: Booking = {
+      id: `CP-US-${String(Math.floor(1000 + Math.random() * 9000))}`,
+      userId: user.id,
+      clientName: name.trim(),
+      clientEmail: email.trim(),
+      clientPhone: phone.trim(),
+      category,
+      date,
+      timeSlotPST: slot.timePST,
+      convertedTime: `${slot.timePST} PST (${converted.time}${converted.dayShift} ${selectedTimezone.code})`,
+      clientTimezone: selectedTimezone,
+      location,
+      selectedAddons: addons,
+      ...(instructions.trim() ? { specialInstructions: instructions.trim() } : {}),
+      subtotalUSD: money.subtotal,
+      taxUSD: money.tax,
+      totalUSD: money.total,
+      status: 'booked',
+      createdAt: new Date().toISOString(),
     }
 
-    const newBooking: Booking = {
-      id: 'APEX-US-' + Math.floor(1000 + Math.random() * 9000),
-      userId: user ? user.id : 'guest-' + Date.now(),
-      clientName,
-      clientEmail,
-      clientPhone,
-      category: selectedCategory,
-      date: selectedDate,
-      timeSlotPST: selectedSlot.timePST,
-      convertedTime: `${selectedSlot.timePST} PST (${convertSlotToTimezone(selectedSlot.timePST, selectedTimezone)})`,
-      clientTimezone: selectedTimezone,
-      location: selectedLocation,
-      selectedAddons: addons.filter(a => a.selected),
-      specialInstructions: specialNotes,
-      subtotalUSD: subtotal,
-      taxUSD: taxUSD,
-      totalUSD: grandTotal,
-      status: 'booked',
-      createdAt: new Date().toISOString()
-    };
+    onBookingConfirmed(booking)
+    setConfirmed(booking)
+  }
 
-    setBookingDone(newBooking);
-    onBookingConfirmed(newBooking);
-  };
+  const resetFlow = () => {
+    setConfirmed(null)
+    setCategory(null)
+    setDate(null)
+    setSlot(null)
+    setAddons([])
+    setInstructions('')
+    setStep(0)
+    setDirection(-1)
+  }
 
-  // Generate .ICS iCalendar download file
-  const downloadCalendarICS = () => {
-    if (!bookingDone) return;
-    const icsContent = `BEGIN:VCALENDAR
-VERSION:2.0
-PRODID:-//Apex Flash Studios//USA//EN
-BEGIN:VEVENT
-SUMMARY:Apex Flash Shoot: ${bookingDone.category.title}
-DESCRIPTION:Scheduled at ${bookingDone.location.name} (${bookingDone.location.area}). Booking ID: ${bookingDone.id}
-LOCATION:${bookingDone.location.name}, ${bookingDone.location.area}, USA
-DTSTART:${bookingDone.date.replace(/-/g, '')}T090000Z
-DTEND:${bookingDone.date.replace(/-/g, '')}T130000Z
-STATUS:CONFIRMED
-END:VEVENT
-END:VCALENDAR`;
+  /* ------------------------------------------------------------ calendar -- */
 
-    const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
-    const link = document.createElement('a');
-    link.href = window.URL.createObjectURL(blob);
-    link.setAttribute('download', `${bookingDone.id}-Schedule.ics`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
+  const calendarCells = useMemo(() => {
+    const firstWeekday = new Date(viewYear, viewMonth, 1).getDay()
+    const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate()
+    const cells: Array<{ day: number; iso: string; past: boolean; isToday: boolean; weekend: boolean } | null> = []
+    for (let i = 0; i < firstWeekday; i++) cells.push(null)
+    const todayIso = toIsoDate(today.y, today.mo, today.d)
+    for (let d = 1; d <= daysInMonth; d++) {
+      const iso = toIsoDate(viewYear, viewMonth, d)
+      const weekday = new Date(viewYear, viewMonth, d).getDay()
+      cells.push({
+        day: d,
+        iso,
+        past: iso < todayIso,
+        isToday: iso === todayIso,
+        weekend: weekday === 0 || weekday === 6,
+      })
+    }
+    return cells
+  }, [viewYear, viewMonth, today])
+
+  const canGoPrevMonth = viewYear > today.y || (viewYear === today.y && viewMonth > today.mo)
+
+  const shiftMonth = (delta: number) => {
+    const next = new Date(viewYear, viewMonth + delta, 1)
+    setViewYear(next.getFullYear())
+    setViewMonth(next.getMonth())
+  }
+
+  const formatSelectedDate = (iso: string) => {
+    const [y, mo, d] = iso.split('-').map(Number)
+    return new Date(y, mo - 1, d).toLocaleDateString('en-US', {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+    })
+  }
+
+  /* -------------------------------------------------------------- render -- */
+
+  const slideVariants = {
+    enter: (dir: number) => ({ opacity: 0, x: dir * 36 }),
+    center: { opacity: 1, x: 0 },
+    exit: (dir: number) => ({ opacity: 0, x: dir * -36 }),
+  }
 
   return (
-    <section id="booking" className="py-24 px-4 lg:px-8 relative">
-      
-      {/* Ambient Radial Lighting */}
-      <div className="absolute top-1/3 right-10 w-[500px] h-[500px] rounded-full bg-amber-500/10 blur-3xl pointer-events-none"></div>
+    <section ref={sectionRef} id="booking" className="relative bg-raise/40 py-24 md:py-32 lg:py-40">
+      <div className="rule-fade absolute inset-x-0 top-0" aria-hidden="true" />
+      <div className="mx-auto w-full max-w-5xl px-5 sm:px-8 lg:px-12">
+        <SectionHeading
+          eyebrow="RESERVE YOUR DATE"
+          title={
+            <>
+              Book a shoot in <span className="text-gradient-gold">under two minutes</span>
+            </>
+          }
+          subtitle="Pick a production, lock a date in your own timezone and get an itemised quote on the spot. A 25% deposit holds any date for 14 days."
+        />
 
-      <div className="max-w-6xl mx-auto space-y-10">
-        
-        {/* Section Heading */}
-        <div className="text-center max-w-3xl mx-auto space-y-4">
-          <div className="inline-flex items-center gap-2 glass-pill-gold px-4 py-1.5 text-xs font-mono font-bold uppercase">
-            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-            <span>NATIONWIDE US TIMEZONE SCHEDULER</span>
-          </div>
-          <h2 className="text-4xl sm:text-5xl font-serif font-bold text-white tracking-tight">
-            Schedule Your <span className="text-gradient-gold italic font-normal">8K Shoot</span> & Production
-          </h2>
-          <p className="text-base text-slate-300 font-light max-w-2xl mx-auto">
-            Select your shoot package, stage location, camera add-ons, and convert shoot times across US timezones in real time.
-          </p>
-        </div>
-
-        {/* Wizard Progress Bar */}
-        {!bookingDone && (
-          <div className="glass-panel p-3 sm:p-4 border-white/15">
-            <div className="grid grid-cols-5 gap-2 text-center text-xs font-mono">
-              {[
-                { s: 1, full: '1. Package Tier', short: '1. Package' },
-                { s: 2, full: '2. Timezone & Slot', short: '2. Slot' },
-                { s: 3, full: '3. Stage Venue', short: '3. Stage' },
-                { s: 4, full: '4. Gear Add-ons', short: '4. Gear' },
-                { s: 5, full: '5. Lock Booking', short: '5. Lock' }
-              ].map(item => (
-                <button
-                  key={item.s}
-                  onClick={() => setStep(item.s)}
-                  className={`py-2.5 px-2 rounded-xl font-bold transition-all border-none cursor-pointer truncate ${
-                    step === item.s
-                      ? 'btn-primary text-black shadow-lg scale-105'
-                      : step > item.s
-                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                      : 'bg-white/5 text-slate-400'
-                  }`}
-                >
-                  <span className="hidden sm:inline">{item.full}</span>
-                  <span className="inline sm:hidden">{item.short}</span>
-                </button>
-              ))}
+        {confirmed ? (
+          /* --------------------------------------------------- success -- */
+          <m.div
+            initial={{ opacity: 0, scale: 0.96, y: 16 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            transition={{ duration: 0.45, ease: EASE.outExpo }}
+            className="glass-strong mx-auto mt-14 max-w-xl rounded-3xl p-8 text-center sm:p-10"
+          >
+            <m.span
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              transition={{ duration: 0.5, delay: 0.15, ease: EASE.outExpo }}
+              className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-gold-400 text-[#0a0a0a]"
+            >
+              <Check className="h-8 w-8" aria-hidden="true" />
+            </m.span>
+            <h3 className="mt-6 font-display text-3xl text-ink-hi">You&apos;re booked.</h3>
+            <p className="mt-2 font-mono text-[13px] tracking-[0.14em] text-gold-400">
+              {confirmed.id}
+            </p>
+            <p className="mx-auto mt-4 max-w-md text-[14px] leading-relaxed text-ink-mid">
+              {confirmed.category.title} · {formatSelectedDate(confirmed.date)} ·{' '}
+              {confirmed.convertedTime}. A producer will call within one business day to kick off
+              pre-production.
+            </p>
+            <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
+              <Button
+                onClick={() => {
+                  document.getElementById('portal')?.scrollIntoView({ behavior: 'smooth' })
+                }}
+              >
+                <PartyPopper className="h-4 w-4" aria-hidden="true" />
+                View in your portal
+              </Button>
+              <Button variant="outline" onClick={resetFlow}>
+                Book another
+              </Button>
             </div>
-          </div>
-        )}
+          </m.div>
+        ) : (
+          <div className="mt-14">
+            {/* ------------------------------------------------- stepper -- */}
+            <ol className="flex items-center justify-center gap-2 sm:gap-4" aria-label="Booking steps">
+              {STEPS.map((s, i) => {
+                const isDone = i < step
+                const isCurrent = i === step
+                return (
+                  <li key={s.id} className="flex items-center gap-2 sm:gap-4">
+                    {i > 0 && (
+                      <span
+                        className={cx('h-px w-6 sm:w-12', isDone || isCurrent ? 'bg-gold-400/60' : 'bg-white/[0.1]')}
+                        aria-hidden="true"
+                      />
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => isDone && goTo(i as StepIndex)}
+                      disabled={!isDone}
+                      aria-current={isCurrent ? 'step' : undefined}
+                      className={cx(
+                        'flex items-center gap-2 rounded-full py-2 pl-2 pr-3 transition-colors duration-300',
+                        isDone && 'cursor-pointer hover:bg-white/[0.05]'
+                      )}
+                    >
+                      <span
+                        className={cx(
+                          'flex h-8 w-8 items-center justify-center rounded-full border text-[13px] font-semibold',
+                          isCurrent
+                            ? 'border-gold-400 bg-gold-400 text-[#0a0a0a]'
+                            : isDone
+                              ? 'border-gold-400/60 text-gold-400'
+                              : 'border-white/15 text-ink-low'
+                        )}
+                      >
+                        {isDone ? <Check className="h-4 w-4" aria-hidden="true" /> : i + 1}
+                      </span>
+                      <span
+                        className={cx(
+                          'hidden text-[13px] font-medium md:block',
+                          isCurrent ? 'text-ink-hi' : isDone ? 'text-ink-mid' : 'text-ink-low'
+                        )}
+                      >
+                        {s.label}
+                      </span>
+                    </button>
+                  </li>
+                )
+              })}
+            </ol>
 
-        {/* STEP 1: Shoot Category Selection */}
-        {!bookingDone && step === 1 && (
-          <div className="space-y-6 animate-fadeIn">
-            <div className="flex items-center justify-between">
-              <h3 className="text-2xl font-serif font-bold text-white flex items-center gap-2.5">
-                <Camera className="w-6 h-6 text-amber-400" />
-                <span>Select Shoot Package Tier</span>
-              </h3>
-              <span className="text-xs font-mono text-slate-400">Step 1 of 5</span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {SHOOT_CATEGORIES.map(cat => (
-                <div
-                  key={cat.id}
-                  onClick={() => setSelectedCategory(cat)}
-                  className={`glass-panel p-5 cursor-pointer relative overflow-hidden transition-all border ${
-                    selectedCategory.id === cat.id
-                      ? 'border-amber-500 bg-amber-500/15 shadow-2xl scale-[1.02]'
-                      : 'border-white/10 hover:border-white/20'
-                  }`}
+            {/* --------------------------------------------------- panes -- */}
+            <div className="mt-10 overflow-hidden">
+              <AnimatePresence mode="wait" custom={direction} initial={false}>
+                <m.div
+                  key={step}
+                  custom={direction}
+                  variants={slideVariants}
+                  initial="enter"
+                  animate="center"
+                  exit="exit"
+                  transition={{ duration: 0.3, ease: EASE.outExpo }}
                 >
-                  {cat.popular && (
-                    <span className="absolute top-3 right-3 text-[10px] font-mono font-bold bg-amber-500 text-black px-2.5 py-0.5 rounded-full uppercase shadow-lg">
-                      Popular Tier
-                    </span>
+                  {/* ============================== STEP 1: production == */}
+                  {step === 0 && (
+                    <div
+                      role="radiogroup"
+                      aria-label="Production type"
+                      className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
+                    >
+                      {SHOOT_CATEGORIES.map((cat) => {
+                        const active = category?.id === cat.id
+                        return (
+                          <button
+                            key={cat.id}
+                            type="button"
+                            role="radio"
+                            aria-checked={active}
+                            onClick={() => setCategory(cat)}
+                            className={cx(
+                              'glass rounded-2xl p-5 text-left transition-all duration-300',
+                              active
+                                ? 'border-gold-400/70 shadow-gold'
+                                : 'hover:border-white/20'
+                            )}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <p className="font-display text-lg leading-snug text-ink-hi">
+                                {cat.title}
+                              </p>
+                              <span
+                                className={cx(
+                                  'mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border',
+                                  active ? 'border-gold-400 bg-gold-400' : 'border-white/25'
+                                )}
+                                aria-hidden="true"
+                              >
+                                {active && <Check className="h-3 w-3 text-[#0a0a0a]" />}
+                              </span>
+                            </div>
+                            <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.16em] text-gold-400">
+                              {cat.subtitle}
+                            </p>
+                            <div className="mt-4 flex items-center justify-between text-[13px]">
+                              <span className="text-ink-mid">
+                                <Clock className="mr-1 inline h-3.5 w-3.5" aria-hidden="true" />
+                                {cat.durationHours}h shoot
+                              </span>
+                              <span className="font-medium text-ink-hi">
+                                from {USD0(cat.basePriceUSD)}
+                              </span>
+                            </div>
+                          </button>
+                        )
+                      })}
+                    </div>
                   )}
 
-                  <div className="h-44 rounded-2xl overflow-hidden mb-4 relative">
-                    <img src={cat.coverImage} alt={cat.title} className="w-full h-full object-cover" />
-                    <div className="absolute inset-0 bg-gradient-to-t from-[#04060a] via-transparent to-transparent"></div>
-                  </div>
-
-                  <h4 className="text-xl font-serif font-bold text-white">{cat.title}</h4>
-                  <p className="text-xs text-amber-400 font-mono font-bold mb-2">{cat.subtitle}</p>
-                  <p className="text-xs text-slate-300 font-light line-clamp-2 mb-4">{cat.description}</p>
-
-                  <div className="pt-3 border-t border-white/10 flex items-center justify-between font-mono">
-                    <div>
-                      <span className="text-[10px] text-slate-400 uppercase block">Base Price (USD)</span>
-                      <p className="text-xl font-bold text-amber-400 font-serif">
-                        ${cat.basePriceUSD.toLocaleString('en-US')}
-                      </p>
-                    </div>
-                    <span className="text-xs text-slate-300 glass-pill px-3 py-1">
-                      {cat.durationHours} Hours Shoot
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="flex justify-end pt-4">
-              <button
-                onClick={() => setStep(2)}
-                className="btn-primary text-sm px-7 py-3.5"
-              >
-                <span>Continue to Calendar & Timezone</span>
-                <ChevronRight className="w-4 h-4 text-black" />
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* STEP 2: Interactive Date Picker & Timezone Conversion */}
-        {!bookingDone && step === 2 && (
-          <div className="glass-panel p-6 sm:p-8 space-y-6 border-white/15 animate-fadeIn">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-white/10 pb-4">
-              <div>
-                <h3 className="text-2xl font-serif font-bold text-white flex items-center gap-2.5">
-                  <CalendarIcon className="w-6 h-6 text-amber-400" />
-                  <span>Select Date & Time Slot</span>
-                </h3>
-                <p className="text-xs text-slate-400 font-mono mt-1">
-                  Converts US West Coast (PST) timings directly into your selected US local timezone
-                </p>
-              </div>
-
-              {/* Timezone Switcher */}
-              <div className="flex items-center gap-2 bg-white/5 p-2 rounded-xl border border-white/15">
-                <Clock className="w-4 h-4 text-amber-400" />
-                <span className="text-xs font-mono text-slate-300">Your Timezone:</span>
-                <select
-                  value={selectedTimezone.id}
-                  onChange={e => {
-                    const tz = TIMEZONES.find(t => t.id === e.target.value);
-                    if (tz) onSelectTimezone(tz);
-                  }}
-                  className="bg-slate-900 text-amber-300 text-xs font-mono font-bold rounded-lg px-2.5 py-1 border border-white/20 focus:outline-none"
-                >
-                  {TIMEZONES.map(t => (
-                    <option key={t.id} value={t.id}>{t.name} ({t.code})</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-8">
-              
-              {/* Date Selector */}
-              <div className="md:col-span-5 space-y-4">
-                <label className="block text-xs font-mono font-bold text-amber-400 uppercase tracking-wider">
-                  Shoot Date Selection
-                </label>
-                <input
-                  type="date"
-                  value={selectedDate}
-                  min={new Date().toISOString().split('T')[0]}
-                  onChange={e => setSelectedDate(e.target.value)}
-                  className="w-full bg-slate-900 border border-white/20 rounded-xl p-3.5 text-white text-sm font-mono focus:border-amber-400 focus:outline-none"
-                />
-
-                <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-xs space-y-2 font-mono">
-                  <div className="font-bold text-amber-300 flex items-center gap-1.5">
-                    <Zap className="w-4 h-4 text-amber-400" />
-                    <span>Selected Date Summary</span>
-                  </div>
-                  <p className="text-slate-300">
-                    Target Shoot Date: <strong className="text-white">{selectedDate}</strong>
-                  </p>
-                  <p className="text-slate-400 text-[11px]">
-                    Golden hour sunset lighting conditions on this date will peak at ~05:30 PM PST.
-                  </p>
-                </div>
-              </div>
-
-              {/* Time Slots Converter */}
-              <div className="md:col-span-7 space-y-4">
-                <label className="block text-xs font-mono font-bold text-amber-400 uppercase tracking-wider">
-                  Available Time Slots (Auto-Converted to {selectedTimezone.code})
-                </label>
-
-                <div className="space-y-3">
-                  {TIME_SLOTS_PST.map(slot => {
-                    const convertedStr = convertSlotToTimezone(slot.timePST, selectedTimezone);
-                    const isSelected = selectedSlot.id === slot.id;
-
-                    return (
-                      <div
-                        key={slot.id}
-                        onClick={() => setSelectedSlot(slot)}
-                        className={`p-4 rounded-2xl cursor-pointer border transition-all flex items-center justify-between ${
-                          isSelected
-                            ? 'bg-amber-500/20 border-amber-500 text-white shadow-xl'
-                            : 'bg-white/5 border-white/10 hover:border-white/20 text-slate-300'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${isSelected ? 'bg-amber-500 text-black' : 'bg-white/10 text-slate-400'}`}>
-                            <Clock className="w-4 h-4" />
-                          </div>
-                          <div>
-                            <p className="text-sm font-bold font-serif">{slot.label}</p>
-                            <p className="text-xs text-amber-400 font-mono">
-                              PST: {slot.timePST} → <strong className="text-white">{convertedStr}</strong>
-                            </p>
+                  {/* =========================== STEP 2: date & time == */}
+                  {step === 1 && (
+                    <div className="grid gap-6 lg:grid-cols-[1.1fr_1fr]">
+                      {/* Calendar */}
+                      <div className="glass rounded-2xl p-5 sm:p-6">
+                        <div className="flex items-center justify-between">
+                          <h3 className="flex items-center gap-2 font-display text-lg text-ink-hi">
+                            <Calendar className="h-4 w-4 text-gold-400" aria-hidden="true" />
+                            {MONTH_NAMES[viewMonth]} {viewYear}
+                          </h3>
+                          <div className="flex gap-1">
+                            <button
+                              type="button"
+                              onClick={() => shiftMonth(-1)}
+                              disabled={!canGoPrevMonth}
+                              aria-label="Previous month"
+                              className="flex h-10 w-10 items-center justify-center rounded-full text-ink-mid transition-colors hover:bg-white/[0.06] hover:text-ink-hi disabled:opacity-30"
+                            >
+                              <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => shiftMonth(1)}
+                              aria-label="Next month"
+                              className="flex h-10 w-10 items-center justify-center rounded-full text-ink-mid transition-colors hover:bg-white/[0.06] hover:text-ink-hi"
+                            >
+                              <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                            </button>
                           </div>
                         </div>
 
-                        {slot.isPeak && (
-                          <span className="text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 px-2.5 py-1 rounded-md border border-amber-500/40">
-                            Golden Hour
-                          </span>
+                        <div className="mt-4 grid grid-cols-7 gap-1">
+                          {WEEKDAYS.map((wd) => (
+                            <span
+                              key={wd}
+                              className="py-1 text-center font-mono text-[10px] uppercase tracking-wider text-ink-low"
+                            >
+                              {wd}
+                            </span>
+                          ))}
+                          {calendarCells.map((cell, i) =>
+                            cell === null ? (
+                              <span key={`blank-${i}`} aria-hidden="true" />
+                            ) : (
+                              <button
+                                key={cell.iso}
+                                type="button"
+                                disabled={cell.past}
+                                onClick={() => setDate(cell.iso)}
+                                aria-label={formatSelectedDate(cell.iso)}
+                                aria-pressed={date === cell.iso}
+                                className={cx(
+                                  'flex aspect-square items-center justify-center rounded-lg text-[13px] transition-colors duration-200',
+                                  cell.past && 'text-ink-low/40',
+                                  !cell.past && date !== cell.iso && 'text-ink-mid hover:bg-white/[0.07] hover:text-ink-hi',
+                                  !cell.past && cell.weekend && date !== cell.iso && 'text-gold-300/80',
+                                  cell.isToday && date !== cell.iso && 'ring-1 ring-inset ring-gold-400/50',
+                                  date === cell.iso && 'bg-gold-400 font-semibold text-[#0a0a0a]'
+                                )}
+                              >
+                                {cell.day}
+                              </button>
+                            )
+                          )}
+                        </div>
+                        {date && (
+                          <p className="mt-4 text-[13px] text-gold-300">
+                            {formatSelectedDate(date)}
+                          </p>
                         )}
                       </div>
-                    );
-                  })}
-                </div>
-              </div>
 
-            </div>
+                      <div className="space-y-6">
+                        {/* Timezone */}
+                        <div ref={tzRef} className="relative">
+                          <p className="mb-2 flex items-center gap-2 text-[13px] font-medium text-ink-mid">
+                            <Globe className="h-3.5 w-3.5 text-gold-400" aria-hidden="true" />
+                            Your timezone
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => setTzOpen((v) => !v)}
+                            aria-expanded={tzOpen}
+                            aria-haspopup="listbox"
+                            className="glass flex h-12 w-full items-center justify-between rounded-xl px-4 text-[13px] text-ink-hi transition-colors hover:border-white/20"
+                          >
+                            <span className="truncate">{selectedTimezone.name}</span>
+                            <ChevronDown
+                              className={cx('h-4 w-4 shrink-0 text-ink-mid transition-transform duration-200', tzOpen && 'rotate-180')}
+                              aria-hidden="true"
+                            />
+                          </button>
+                          <AnimatePresence>
+                            {tzOpen && (
+                              <m.ul
+                                role="listbox"
+                                aria-label="Timezone"
+                                initial={{ opacity: 0, y: -6 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: -6 }}
+                                transition={{ duration: 0.18 }}
+                                className="glass-strong absolute z-20 mt-2 w-full overflow-hidden rounded-xl py-1 shadow-deep"
+                              >
+                                {TIMEZONES.map((tz) => (
+                                  <li key={tz.id}>
+                                    <button
+                                      type="button"
+                                      role="option"
+                                      aria-selected={tz.id === selectedTimezone.id}
+                                      onClick={() => {
+                                        onSelectTimezone(tz)
+                                        setTzOpen(false)
+                                      }}
+                                      className={cx(
+                                        'flex w-full items-center justify-between px-4 py-2.5 text-left text-[13px] transition-colors',
+                                        tz.id === selectedTimezone.id
+                                          ? 'text-gold-300'
+                                          : 'text-ink-mid hover:bg-white/[0.05] hover:text-ink-hi'
+                                      )}
+                                    >
+                                      <span className="truncate">{tz.name}</span>
+                                      <span className="ml-2 font-mono text-[11px] text-ink-low">
+                                        {tz.offset}
+                                      </span>
+                                    </button>
+                                  </li>
+                                ))}
+                              </m.ul>
+                            )}
+                          </AnimatePresence>
+                        </div>
 
-            <div className="flex justify-between pt-4 border-t border-white/10">
-              <button
-                onClick={() => setStep(1)}
-                className="btn-secondary text-sm px-6 py-3"
-              >
-                <ChevronLeft className="w-4 h-4" />
-                <span>Back</span>
-              </button>
-              <button
-                onClick={() => setStep(3)}
-                className="btn-primary text-sm px-7 py-3"
-              >
-                <span>Continue to Stage Location</span>
-                <ChevronRight className="w-4 h-4 text-black" />
-              </button>
-            </div>
-          </div>
-        )}
+                        {/* Slots */}
+                        <div>
+                          <p className="mb-2 flex items-center gap-2 text-[13px] font-medium text-ink-mid">
+                            <Clock className="h-3.5 w-3.5 text-gold-400" aria-hidden="true" />
+                            Shoot window
+                          </p>
+                          <div className="space-y-2">
+                            {TIME_SLOTS_PST.map((s) => {
+                              const conv = convertSlot(s.timePST, selectedTimezone)
+                              const active = slot?.id === s.id
+                              return (
+                                <button
+                                  key={s.id}
+                                  type="button"
+                                  disabled={!s.available}
+                                  onClick={() => setSlot(s)}
+                                  aria-pressed={active}
+                                  className={cx(
+                                    'glass flex w-full items-center justify-between gap-3 rounded-xl px-4 py-3 text-left transition-all duration-300',
+                                    active ? 'border-gold-400/70 shadow-gold' : 'hover:border-white/20',
+                                    !s.available && 'opacity-40'
+                                  )}
+                                >
+                                  <span>
+                                    <span className="flex items-center gap-2 text-[14px] font-medium text-ink-hi">
+                                      {s.timePST} PST
+                                      {s.isPeak && (
+                                        <span className="flex items-center gap-1 rounded-full bg-gold-400/15 px-2 py-0.5 font-mono text-[9px] tracking-[0.14em] text-gold-300">
+                                          <Zap className="h-2.5 w-2.5" aria-hidden="true" />
+                                          PEAK
+                                        </span>
+                                      )}
+                                    </span>
+                                    <span className="mt-0.5 block text-[12px] text-ink-mid">
+                                      {s.label}
+                                    </span>
+                                  </span>
+                                  {selectedTimezone.id !== 'pst' && (
+                                    <span className="shrink-0 font-mono text-[11px] text-ink-low">
+                                      {conv.time}
+                                      {conv.dayShift} {selectedTimezone.code}
+                                    </span>
+                                  )}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
 
-        {/* STEP 3: US Location / Studio Picker */}
-        {!bookingDone && step === 3 && (
-          <div className="space-y-6 animate-fadeIn">
-            <div className="flex items-center justify-between">
-              <h3 className="text-2xl font-serif font-bold text-white flex items-center gap-2.5">
-                <MapPin className="w-6 h-6 text-amber-400" />
-                <span>Select Studio Stage Location</span>
-              </h3>
-              <span className="text-xs font-mono text-slate-400">Step 3 of 5</span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {LOCATIONS.map(loc => (
-                <div
-                  key={loc.id}
-                  onClick={() => setSelectedLocation(loc)}
-                  className={`glass-panel p-5 cursor-pointer border transition-all flex flex-col justify-between ${
-                    selectedLocation.id === loc.id
-                      ? 'border-amber-500 bg-amber-500/15 shadow-2xl scale-[1.01]'
-                      : 'border-white/10 hover:border-white/20'
-                  }`}
-                >
-                  <div>
-                    <div className="h-48 rounded-2xl overflow-hidden mb-4 relative">
-                      <img src={loc.image} alt={loc.name} className="w-full h-full object-cover" />
-                      <span className="absolute top-3.5 left-3.5 text-[10px] font-mono font-bold bg-black/80 backdrop-blur-md text-amber-300 px-3 py-1 rounded-full uppercase border border-amber-500/30">
-                        {loc.area}
-                      </span>
-                    </div>
-
-                    <h4 className="text-xl font-serif font-bold text-white">{loc.name}</h4>
-                    <p className="text-xs text-slate-300 font-light mt-1">{loc.description}</p>
-                  </div>
-
-                  <div className="pt-4 border-t border-white/10 mt-4 flex items-center justify-between font-mono">
-                    <span className="text-xs text-slate-400">Stage Location Fee:</span>
-                    <span className="text-base font-bold text-amber-400 font-serif">
-                      {loc.extraFeeUSD === 0 ? 'Included in Base' : `+$${loc.extraFeeUSD.toLocaleString('en-US')}`}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="flex justify-between pt-4">
-              <button
-                onClick={() => setStep(2)}
-                className="btn-secondary text-sm px-6 py-3"
-              >
-                <ChevronLeft className="w-4 h-4" />
-                <span>Back</span>
-              </button>
-              <button
-                onClick={() => setStep(4)}
-                className="btn-primary text-sm px-7 py-3"
-              >
-                <span>Continue to Gear Add-ons</span>
-                <ChevronRight className="w-4 h-4 text-black" />
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* STEP 4: Gear & Add-On Configurator */}
-        {!bookingDone && step === 4 && (
-          <div className="space-y-6 animate-fadeIn">
-            <div className="flex items-center justify-between">
-              <h3 className="text-2xl font-serif font-bold text-white flex items-center gap-2.5">
-                <Camera className="w-6 h-6 text-amber-400" />
-                <span>Select Cinema Gear & Speed Add-ons</span>
-              </h3>
-              <span className="text-xs font-mono text-slate-400">Step 4 of 5</span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-              {addons.map(addon => (
-                <div
-                  key={addon.id}
-                  onClick={() => toggleAddon(addon.id)}
-                  className={`glass-panel p-5 cursor-pointer border transition-all flex flex-col justify-between ${
-                    addon.selected
-                      ? 'border-amber-500 bg-amber-500/15 shadow-xl'
-                      : 'border-white/10 hover:border-white/20'
-                  }`}
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-mono font-bold text-amber-400 uppercase tracking-wider">{addon.category}</span>
-                      <div className={`w-5 h-5 rounded-full flex items-center justify-center border ${addon.selected ? 'bg-amber-500 border-amber-500 text-black' : 'border-white/30'}`}>
-                        {addon.selected && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                        {/* Location */}
+                        <div>
+                          <p className="mb-2 flex items-center gap-2 text-[13px] font-medium text-ink-mid">
+                            <MapPin className="h-3.5 w-3.5 text-gold-400" aria-hidden="true" />
+                            Location
+                          </p>
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            {LOCATIONS.map((loc) => {
+                              const active = location.id === loc.id
+                              return (
+                                <button
+                                  key={loc.id}
+                                  type="button"
+                                  onClick={() => setLocation(loc)}
+                                  aria-pressed={active}
+                                  className={cx(
+                                    'glass rounded-xl px-4 py-3 text-left transition-all duration-300',
+                                    active ? 'border-gold-400/70' : 'hover:border-white/20'
+                                  )}
+                                >
+                                  <span className="block text-[13px] font-medium leading-snug text-ink-hi">
+                                    {loc.name}
+                                  </span>
+                                  <span className="mt-1 block text-[11px] text-ink-mid">
+                                    {loc.extraFeeUSD === 0
+                                      ? 'Included'
+                                      : `+${USD0(loc.extraFeeUSD)}`}
+                                  </span>
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
                       </div>
                     </div>
-                    <h4 className="text-base font-serif font-bold text-white">{addon.name}</h4>
-                    <p className="text-xs text-slate-300 font-light mt-1">{addon.description}</p>
-                  </div>
+                  )}
 
-                  <div className="pt-3 border-t border-white/10 mt-3 flex items-center justify-between font-mono">
-                    <span className="text-xs text-slate-400">Add-on Price:</span>
-                    <span className="text-sm font-bold text-amber-400">+$${addon.priceUSD.toLocaleString('en-US')}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
+                  {/* ================================ STEP 3: details == */}
+                  {step === 2 && (
+                    <form
+                      noValidate
+                      onSubmit={(e: FormEvent<HTMLFormElement>) => {
+                        e.preventDefault()
+                        handleContinue()
+                      }}
+                      className="mx-auto grid max-w-3xl gap-6 lg:grid-cols-2"
+                    >
+                      <div className="space-y-4">
+                        {(
+                          [
+                            {
+                              id: 'bk-name', label: 'Full name', type: 'text', value: name,
+                              set: setName, error: errors.name, auto: 'name', ph: 'Alex Rivera',
+                            },
+                            {
+                              id: 'bk-email', label: 'Email address', type: 'email', value: email,
+                              set: setEmail, error: errors.email, auto: 'email', ph: 'you@company.com',
+                            },
+                            {
+                              id: 'bk-phone', label: 'Phone', type: 'tel', value: phone,
+                              set: setPhone, error: errors.phone, auto: 'tel', ph: '+1 (310) 555-0142',
+                            },
+                          ] as const
+                        ).map((f) => (
+                          <div key={f.id}>
+                            <label htmlFor={f.id} className="mb-1.5 block text-[13px] font-medium text-ink-mid">
+                              {f.label}
+                            </label>
+                            <input
+                              id={f.id}
+                              type={f.type}
+                              autoComplete={f.auto}
+                              value={f.value}
+                              placeholder={f.ph}
+                              onChange={(e) => f.set(e.target.value)}
+                              onBlur={() => setErrors(detailErrors)}
+                              aria-invalid={f.error ? true : undefined}
+                              aria-describedby={f.error ? `${f.id}-err` : undefined}
+                              className={cx(
+                                'h-12 w-full rounded-xl border bg-base/80 px-4 text-[14px] text-ink-hi placeholder:text-ink-low',
+                                f.error ? 'border-ember-500/70' : 'border-white/10 focus:border-gold-400/60'
+                              )}
+                            />
+                            {f.error && (
+                              <p id={`${f.id}-err`} className="mt-1.5 text-[12px] text-ember-400">
+                                {f.error}
+                              </p>
+                            )}
+                          </div>
+                        ))}
 
-            <div className="flex justify-between pt-4">
-              <button
-                onClick={() => setStep(3)}
-                className="btn-secondary text-sm px-6 py-3"
-              >
-                <ChevronLeft className="w-4 h-4" />
-                <span>Back</span>
-              </button>
-              <button
-                onClick={() => setStep(5)}
-                className="btn-primary text-sm px-7 py-3"
-              >
-                <span>Proceed to Confirmation & Review</span>
-                <ChevronRight className="w-4 h-4 text-black" />
-              </button>
-            </div>
-          </div>
-        )}
+                        <div>
+                          <label htmlFor="bk-notes" className="mb-1.5 block text-[13px] font-medium text-ink-mid">
+                            Special instructions <span className="text-ink-low">(optional)</span>
+                          </label>
+                          <textarea
+                            id="bk-notes"
+                            value={instructions}
+                            onChange={(e) => setInstructions(e.target.value)}
+                            rows={3}
+                            placeholder="Shot list ideas, references, access notes…"
+                            className="w-full resize-none rounded-xl border border-white/10 bg-base/80 px-4 py-3 text-[14px] text-ink-hi placeholder:text-ink-low focus:border-gold-400/60"
+                          />
+                        </div>
+                      </div>
 
-        {/* STEP 5: Review, Contact & Price Summary */}
-        {!bookingDone && step === 5 && (
-          <form onSubmit={handleFinalBooking} className="grid grid-cols-1 lg:grid-cols-12 gap-8 animate-fadeIn">
-            
-            {/* Left: Contact Info */}
-            <div className="lg:col-span-7 glass-panel p-6 sm:p-8 space-y-5 border-white/15">
-              <h3 className="text-2xl font-serif font-bold text-white border-b border-white/10 pb-4 flex items-center gap-2.5">
-                <UserIcon className="w-6 h-6 text-amber-400" />
-                <span>Client Contact Details</span>
-              </h3>
+                      <div>
+                        <p className="mb-2 text-[13px] font-medium text-ink-mid">
+                          Add-ons <span className="text-ink-low">(optional)</span>
+                        </p>
+                        <div className="space-y-2">
+                          {GEAR_ADDONS.map((addon) => {
+                            const active = addons.some((a) => a.id === addon.id)
+                            return (
+                              <button
+                                key={addon.id}
+                                type="button"
+                                aria-pressed={active}
+                                onClick={() =>
+                                  setAddons((prev) =>
+                                    active
+                                      ? prev.filter((a) => a.id !== addon.id)
+                                      : [...prev, addon]
+                                  )
+                                }
+                                className={cx(
+                                  'glass flex w-full items-start gap-3 rounded-xl px-4 py-3 text-left transition-all duration-300',
+                                  active ? 'border-gold-400/70' : 'hover:border-white/20'
+                                )}
+                              >
+                                <span
+                                  className={cx(
+                                    'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border',
+                                    active ? 'border-gold-400 bg-gold-400' : 'border-white/25'
+                                  )}
+                                  aria-hidden="true"
+                                >
+                                  {active && <Check className="h-3 w-3 text-[#0a0a0a]" />}
+                                </span>
+                                <span className="flex-1">
+                                  <span className="flex items-center justify-between gap-2 text-[13px] font-medium text-ink-hi">
+                                    {addon.name}
+                                    <span className="font-mono text-[12px] text-gold-300">
+                                      +{USD0(addon.priceUSD)}
+                                    </span>
+                                  </span>
+                                  <span className="mt-0.5 block text-[12px] leading-relaxed text-ink-mid">
+                                    {addon.description}
+                                  </span>
+                                </span>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    </form>
+                  )}
 
-              {!user && (
-                <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between text-xs font-mono">
-                  <span className="text-amber-200">Have an account with us?</span>
-                  <button
-                    type="button"
-                    onClick={onOpenAuthModal}
-                    className="text-amber-400 font-bold hover:underline bg-transparent border-none cursor-pointer"
-                  >
-                    Sign In for 1-Click Fill
-                  </button>
-                </div>
-              )}
+                  {/* ================================ STEP 4: confirm == */}
+                  {step === 3 && category && date && slot && (
+                    <div className="mx-auto max-w-2xl">
+                      <div className="glass-strong rounded-3xl p-6 sm:p-8">
+                        <h3 className="font-display text-2xl text-ink-hi">Review your booking</h3>
 
-              <div>
-                <label className="block text-xs font-mono font-bold text-slate-300 mb-1.5">Client Full Name *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Sarah Jenkins"
-                  value={clientName}
-                  onChange={e => setClientName(e.target.value)}
-                  className="w-full bg-slate-900 border border-white/20 rounded-xl p-3.5 text-white text-sm focus:border-amber-400 focus:outline-none"
-                />
-              </div>
+                        <dl className="mt-6 space-y-3 text-[14px]">
+                          {[
+                            ['Production', category.title],
+                            ['Date', formatSelectedDate(date)],
+                            [
+                              'Time',
+                              `${slot.timePST} PST (${convertSlot(slot.timePST, selectedTimezone).time}${convertSlot(slot.timePST, selectedTimezone).dayShift} ${selectedTimezone.code})`,
+                            ],
+                            ['Location', location.name],
+                            ['Contact', `${name.trim()} · ${email.trim()}`],
+                          ].map(([label, value]) => (
+                            <div key={label} className="flex justify-between gap-6">
+                              <dt className="shrink-0 text-ink-low">{label}</dt>
+                              <dd className="text-right text-ink-hi">{value}</dd>
+                            </div>
+                          ))}
+                        </dl>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-mono font-bold text-slate-300 mb-1.5">Email Address *</label>
-                  <input
-                    type="email"
-                    required
-                    placeholder="sarah.j@vogue.com"
-                    value={clientEmail}
-                    onChange={e => setClientEmail(e.target.value)}
-                    className="w-full bg-slate-900 border border-white/20 rounded-xl p-3.5 text-white text-sm focus:border-amber-400 focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-mono font-bold text-slate-300 mb-1.5">Phone Number *</label>
-                  <input
-                    type="tel"
-                    required
-                    placeholder="+1 (310) 555-0199"
-                    value={clientPhone}
-                    onChange={e => setClientPhone(e.target.value)}
-                    className="w-full bg-slate-900 border border-white/20 rounded-xl p-3.5 text-white text-sm focus:border-amber-400 focus:outline-none"
-                  />
-                </div>
-              </div>
+                        <div className="rule-fade my-6" aria-hidden="true" />
 
-              <div>
-                <label className="block text-xs font-mono font-bold text-slate-300 mb-1.5">Special Shoot Notes / Creative Vision</label>
-                <textarea
-                  rows={3}
-                  placeholder="Mention specific lighting moods, camera lenses, styling requirements, or reference reels..."
-                  value={specialNotes}
-                  onChange={e => setSpecialNotes(e.target.value)}
-                  className="w-full bg-slate-900 border border-white/20 rounded-xl p-3.5 text-white text-sm focus:border-amber-400 focus:outline-none"
-                />
-              </div>
-            </div>
+                        <dl className="space-y-2 text-[14px]">
+                          <div className="flex justify-between text-ink-mid">
+                            <dt>{category.title}</dt>
+                            <dd className="font-mono">{USD0(money.base)}</dd>
+                          </div>
+                          {money.locationFee > 0 && (
+                            <div className="flex justify-between text-ink-mid">
+                              <dt>Location fee</dt>
+                              <dd className="font-mono">{USD0(money.locationFee)}</dd>
+                            </div>
+                          )}
+                          {addons.map((addon) => (
+                            <div key={addon.id} className="flex justify-between text-ink-mid">
+                              <dt>{addon.name}</dt>
+                              <dd className="font-mono">{USD0(addon.priceUSD)}</dd>
+                            </div>
+                          ))}
+                          <div className="flex justify-between text-ink-mid">
+                            <dt>Tax (8.875%)</dt>
+                            <dd className="font-mono">{USD2(money.tax)}</dd>
+                          </div>
+                          <div className="flex items-baseline justify-between border-t border-white/[0.09] pt-3">
+                            <dt className="text-[15px] font-medium text-ink-hi">Total</dt>
+                            <dd className="font-display text-3xl text-gradient-gold">
+                              {USD2(money.total)}
+                            </dd>
+                          </div>
+                          <div className="flex justify-between pt-1 text-[12px] text-ink-low">
+                            <dt>Deposit due today (25%)</dt>
+                            <dd className="font-mono">{USD2(money.total * 0.25)}</dd>
+                          </div>
+                        </dl>
 
-            {/* Right: Itemized Invoice Summary */}
-            <div className="lg:col-span-5 glass-panel p-6 sm:p-8 space-y-5 border-amber-500/40 flex flex-col justify-between">
-              <div>
-                <h3 className="text-2xl font-serif font-bold text-white border-b border-white/10 pb-4 flex items-center justify-between">
-                  <span>Price Breakdown</span>
-                  <span className="text-xs font-mono text-amber-400">USD ($)</span>
-                </h3>
-
-                <div className="space-y-3.5 pt-4 text-xs font-mono">
-                  <div className="flex justify-between">
-                    <span className="text-slate-300">{selectedCategory.title} ({selectedCategory.durationHours}h)</span>
-                    <span className="text-white font-bold">${categoryPrice.toLocaleString('en-US')}</span>
-                  </div>
-
-                  <div className="flex justify-between">
-                    <span className="text-slate-300">Stage: {selectedLocation.name}</span>
-                    <span className="text-white font-bold">{locationFee === 0 ? 'Included' : `+$${locationFee.toLocaleString('en-US')}`}</span>
-                  </div>
-
-                  {addons.filter(a => a.selected).map(a => (
-                    <div key={a.id} className="flex justify-between text-amber-300">
-                      <span>Add-on: {a.name}</span>
-                      <span className="font-bold">+$${a.priceUSD.toLocaleString('en-US')}</span>
+                        <div className="mt-8">
+                          {user ? (
+                            <Button size="lg" magnetic onClick={handleConfirm} className="w-full">
+                              Confirm booking
+                            </Button>
+                          ) : (
+                            <Button size="lg" onClick={onOpenAuthModal} className="w-full">
+                              Sign in to confirm
+                            </Button>
+                          )}
+                          <p className="mt-3 text-center font-mono text-[11px] text-ink-low">
+                            Quote held for 14 days · No payment collected in this demo
+                          </p>
+                        </div>
+                      </div>
                     </div>
-                  ))}
+                  )}
+                </m.div>
+              </AnimatePresence>
+            </div>
 
-                  <div className="h-[1px] bg-white/10 my-2"></div>
-
-                  <div className="flex justify-between text-slate-300">
-                    <span>Subtotal</span>
-                    <span className="font-bold">${subtotal.toLocaleString('en-US')}</span>
-                  </div>
-
-                  <div className="flex justify-between text-slate-400">
-                    <span>US Sales Tax (8.875%)</span>
-                    <span className="font-bold">${taxUSD.toLocaleString('en-US')}</span>
-                  </div>
-
-                  <div className="p-4 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex justify-between items-center text-white mt-4">
-                    <span className="font-serif font-bold text-sm">Grand Total (USD)</span>
-                    <span className="text-2xl font-serif font-bold text-amber-400">
-                      ${grandTotal.toLocaleString('en-US')}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="space-y-3 pt-4 border-t border-white/10">
-                <button
-                  type="submit"
-                  className="w-full btn-primary justify-center py-4 text-base shadow-2xl"
+            {/* ---------------------------------------------- nav row -- */}
+            {step < 3 ? (
+              <div className="mt-10 flex items-center justify-between">
+                <Button
+                  variant="ghost"
+                  onClick={() => step > 0 && goTo((step - 1) as StepIndex)}
+                  disabled={step === 0}
                 >
-                  <ShieldCheck className="w-5 h-5 text-black" />
-                  <span>Confirm & Lock Booking Slot</span>
-                </button>
-                <p className="text-[10px] font-mono text-center text-slate-400">
-                  Instant confirmation email & SMS dispatch upon locking slot.
-                </p>
+                  <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+                  Back
+                </Button>
+                <Button onClick={handleContinue} disabled={!stepValid[step]}>
+                  Continue
+                  <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                </Button>
               </div>
-            </div>
-          </form>
-        )}
-
-        {/* BOOKING SUCCESS CONFIRMATION MODAL */}
-        {bookingDone && (
-          <div className="glass-panel p-8 sm:p-10 max-w-2xl mx-auto border-amber-500/40 text-center space-y-6 animate-fadeIn shadow-2xl">
-            <div className="w-16 h-16 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center mx-auto">
-              <CheckCircle2 className="w-10 h-10 stroke-[2.5]" />
-            </div>
-
-            <div>
-              <span className="text-xs font-mono font-bold text-amber-400 uppercase tracking-widest">
-                BOOKING CONFIRMED & LOCKED
-              </span>
-              <h3 className="text-3xl font-serif font-bold text-white mt-1">
-                {bookingDone.category.title}
-              </h3>
-              <p className="text-xs text-slate-300 font-mono mt-1">
-                Booking Reference ID: <strong className="text-amber-400">{bookingDone.id}</strong>
-              </p>
-            </div>
-
-            <div className="p-5 rounded-2xl bg-slate-950/80 border border-white/15 text-left text-xs space-y-2.5 font-mono">
-              <p><span className="text-slate-400">Client:</span> <strong className="text-white">{bookingDone.clientName}</strong> ({bookingDone.clientEmail})</p>
-              <p><span className="text-slate-400">Shoot Date:</span> <strong className="text-amber-300">{bookingDone.date}</strong></p>
-              <p><span className="text-slate-400">Converted Slot:</span> <strong className="text-amber-300">{bookingDone.convertedTime}</strong></p>
-              <p><span className="text-slate-400">Stage Venue:</span> <strong className="text-white">{bookingDone.location.name} ({bookingDone.location.area})</strong></p>
-              <p><span className="text-slate-400">Total Paid/Locked:</span> <strong className="text-amber-400">${bookingDone.totalUSD.toLocaleString('en-US')} (incl. Tax)</strong></p>
-            </div>
-
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-2">
-              <button
-                onClick={downloadCalendarICS}
-                className="btn-primary text-xs py-3 px-6"
-              >
-                <Download className="w-4 h-4 text-black" />
-                <span>Download .ICS Calendar Event</span>
-              </button>
-
-              <button
-                onClick={() => {
-                  setBookingDone(null);
-                  setStep(1);
-                }}
-                className="btn-secondary text-xs py-3 px-6"
-              >
-                <span>Book Another Shoot</span>
-              </button>
-            </div>
+            ) : (
+              <div className="mt-10 flex justify-start">
+                <Button variant="ghost" onClick={() => goTo(2)}>
+                  <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+                  Back
+                </Button>
+              </div>
+            )}
           </div>
         )}
-
       </div>
     </section>
-  );
-};
-
+  )
+}

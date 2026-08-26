@@ -1,7 +1,7 @@
 # CONVERSATION CHAT LOG & TRANSCRIPT
 
 ## Conversation Overview
-- **Project**: APEX FLASH STUDIOS & VIK HUB Client Onboarding
+- **Project**: CP STUDIOS & VIK HUB Client Onboarding
 - **Date**: August 2026
 
 ---
@@ -12,7 +12,7 @@
 > *Create me a website end-to-end. Use all my skills from anti-gravity. It might be responsiveness, security, whatever. Use all the new available skills, like glass morphism designs by Apple. This is something related to a flash shoot company... people want to schedule meetings and all based on their authentication, selecting calendar and time zones... Make it perfect and implement it end-to-end.*
 
 #### Agent Response & Execution:
-- Designed and built the single page application **HYD FLASH CINEMA** / **APEX FLASH STUDIOS**.
+- Designed and built the single page application **CP STUDIOS**.
 - Implemented glassmorphism aesthetics (`backdrop-filter: blur(20px)`), dark obsidian theme, responsive layout, interactive 5-step timezone scheduler, package quote builder, Dribbble portfolio video lightbox, equipment vault, authenticated client portal, and AI consultation assistant.
 
 ---
@@ -37,7 +37,7 @@
 > *This is based in the USA. Make sure everything relates to that, and it's kind of generic. The blue color, the background, and colors make it professional.*
 
 #### Agent Response & Execution:
-- Re-aligned branding to **APEX FLASH STUDIOS** with stages in Los Angeles, New York, and Miami.
+- Re-aligned branding to **CP STUDIOS** with stages in Los Angeles, New York, and Miami.
 - Converted currency to **USD ($)**, tax to **8.875% US Sales Tax**, and timezones to **PST, EST, CST, MST, GMT**.
 
 ---

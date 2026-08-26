@@ -2,10 +2,9 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "vite-3000",
-      "runtimeExecutable": "./node_modules/.bin/vite",
-      "runtimeArgs": ["--port", "3000", "--strictPort"],
-      "port": 3000
+      "name": "cp-dev",
+      "url": "http://localhost:5174",
+      "port": 5174
     }
   ]
 }
