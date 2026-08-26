@@ -243,7 +243,7 @@ export function Footer({ onNavigate }: FooterProps) {
                       )}
                     />
                     {error && (
-                      <p id="footer-email-error" className="mt-1.5 text-[12px] text-ember-400">
+                      <p id="footer-email-error" role="alert" className="mt-1.5 text-[12px] text-ember-400">
                         {error}
                       </p>
                     )}

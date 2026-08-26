@@ -396,7 +396,7 @@ export function BookingEngine({
                     <button
                       type="button"
                       onClick={() => isDone && goTo(i as StepIndex)}
-                      disabled={!isDone}
+                      disabled={!isDone && !isCurrent}
                       aria-current={isCurrent ? 'step' : undefined}
                       className={cx(
                         'flex items-center gap-2 rounded-full py-2 pl-2 pr-3 transition-colors duration-300',
@@ -761,7 +761,7 @@ export function BookingEngine({
                               )}
                             />
                             {f.error && (
-                              <p id={`${f.id}-err`} className="mt-1.5 text-[12px] text-ember-400">
+                              <p id={`${f.id}-err`} role="alert" className="mt-1.5 text-[12px] text-ember-400">
                                 {f.error}
                               </p>
                             )}
